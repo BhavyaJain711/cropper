@@ -83,6 +83,10 @@ export default function HelpModal({ isOpen, onClose }) {
                 <span className="shortcut-desc">Redo Selection Crop</span>
               </div>
               <div className="shortcut-row">
+                <span className="shortcut-keys"><kbd>E</kbd></span>
+                <span className="shortcut-desc">Toggle Edit Mode (Edit labels directly via dropdowns)</span>
+              </div>
+              <div className="shortcut-row">
                 <span className="shortcut-keys"><kbd>?</kbd></span>
                 <span className="shortcut-desc">Toggle Help Guide</span>
               </div>
@@ -140,6 +144,7 @@ export default function HelpModal({ isOpen, onClose }) {
         <div className="help-section tips-section">
           <h4>Workflow Pro Tips</h4>
           <ul>
+            <li><strong>Edit Mode</strong>: Toggle Edit Mode (via button or shortcut key <code>E</code>) to transform label displays on already marked items into interactive dropdowns so you can freely change labels anytime.</li>
             <li><strong>Auto-Cycling</strong>: Once you draw a crop box, the active label in the toolbar automatically cycles to the next one in the dropdown list, allowing rapid sequential crop-tagging.</li>
             <li><strong>Inline Editing</strong>: You can change the folder group, label, and raw extracted text directly inside the cards on the sidebar. Text changes are auto-saved on focus-out.</li>
             <li><strong>Local Storage Workspaces</strong>: Your crop progress is saved in local storage automatically. Switch between different PDFs or download a JSON backup from the "Saved Projects" tab.</li>

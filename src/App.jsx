@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import Toolbar from './components/Toolbar';
 import PDFViewer from './components/PDFViewer';
 import SelectionsList from './components/SelectionsList';
 import HelpModal from './components/HelpModal';
+import Assembler from './components/Assembler';
 import { loadPDF, extractTextInRegion, cropCanvasRegion } from './utils/pdfUtils';
 import { exportZip } from './utils/exportZip';
 import { saveSessionMetadata, addOrUpdateSelectionInDB, deleteSelectionFromDB, getSession, deleteSession, getAllSessions, clearAllSessions, importAllSessions } from './utils/db';
 import './App.css';
+
 
 // Utility to convert DataURL to Blob
 function dataURLtoBlob(dataurl) {
@@ -50,7 +53,7 @@ function getInitialLabelOptions() {
             const clean = parsed.map(s => String(s).trim()).filter(Boolean);
             if (clean.length > 0) return clean;
           }
-        } catch (e) {
+        } catch {
           // Fallback to comma split if JSON parse fails
         }
       }
@@ -66,8 +69,13 @@ function getInitialLabelOptions() {
 }
 
 export default function App() {
-  const [pdfDoc, setPdfDoc] = useState(null);
+  const location = useLocation();
+  const isAssembler = location.pathname === '/assembler';
+
+  const pdfDocState = useState(null);
+  const [pdfDoc, setPdfDoc] = pdfDocState;
   const [fileName, setFileName] = useState('');
+
   const [pageCount, setPageCount] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [currentNumber, setCurrentNumber] = useState(1);
@@ -78,6 +86,9 @@ export default function App() {
   });
   const [selections, setSelections] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Edit Mode state (when enabled, lets user freely edit labels of marked items via dropdowns)
+  const [isEditMode, setIsEditMode] = useState(false);
 
   // Undo/Redo history stacks
   const [history, setHistory] = useState([[]]);
@@ -164,6 +175,8 @@ export default function App() {
   // Global keyboard listeners for Arrows and Undo/Redo
   useEffect(() => {
     const handleGlobalKeyDown = (e) => {
+      if (isAssembler) return;
+
       const activeEl = document.activeElement;
       const isEditable = activeEl && (
         activeEl.tagName === 'INPUT' ||
@@ -217,6 +230,12 @@ export default function App() {
         setShowHelp(prev => !prev);
       }
 
+      // Toggle edit mode on 'e' or 'E' key
+      if (e.key.toLowerCase() === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setIsEditMode(prev => !prev);
+      }
+
       // Undo & Redo shortcuts
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
       const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
@@ -236,7 +255,8 @@ export default function App() {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [pageCount, currentLabel, labelOptions, historyPointer, history, handleUndo, handleRedo, setCurrentNumber]);
+  }, [pageCount, currentLabel, labelOptions, historyPointer, history, handleUndo, handleRedo, setCurrentNumber, isAssembler]);
+
 
   // File loading handler
   const handleFileSelect = async (file) => {
@@ -311,8 +331,6 @@ export default function App() {
   // Handle a click-to-select rectangle completion
   const handleSelectionComplete = async (rect, pageObj, viewport) => {
     try {
-      setIsProcessing(true);
-
       // 1. Crop image from PDF page directly at high-res
       const crop = await cropCanvasRegion(pageObj, rect);
       
@@ -351,11 +369,8 @@ export default function App() {
         const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % labelOptions.length;
         setCurrentLabel(labelOptions[nextIndex]);
       }
-
-      setIsProcessing(false);
     } catch (err) {
       console.error('Error processing selection crop:', err);
-      setIsProcessing(false);
     }
   };
 
@@ -405,8 +420,6 @@ export default function App() {
   // Re-crop and run OCR when coordinate rect changes
   const handleSelectionUpdateRect = async (id, rect, pageObj, viewport) => {
     try {
-      setIsProcessing(true);
-
       // 1. Crop image from PDF page directly at high-res
       const crop = await cropCanvasRegion(pageObj, rect);
       
@@ -431,11 +444,8 @@ export default function App() {
         const sessions = await getAllSessions();
         setSavedSessionsList(sessions || {});
       }
-
-      setIsProcessing(false);
     } catch (err) {
       console.error('Error updating selection crop:', err);
-      setIsProcessing(false);
     }
   };
 
@@ -620,68 +630,92 @@ export default function App() {
           <h1>Cropper Studio</h1>
           <span className="app-tag">PDF Area Extractor</span>
         </div>
+        <nav className="header-nav">
+          <Link to="/" className={`nav-link ${!isAssembler ? 'active' : ''}`}>
+            Cropper
+          </Link>
+          <Link to="/assembler" className={`nav-link ${isAssembler ? 'active' : ''}`}>
+            Assembler
+          </Link>
+        </nav>
       </header>
 
-      {/* Main Workspace Layout */}
-      <div className="app-workspace">
-        <div className="workspace-main">
-          <Toolbar
-            onFileSelect={handleFileSelect}
-            fileName={fileName}
-            pageCount={pageCount}
-            currentPage={currentPage}
-            onPageChange={setCurrentPage}
-            currentNumber={currentNumber}
-            onNumberChange={setCurrentNumber}
-            currentLabel={currentLabel}
-            onLabelChange={setCurrentLabel}
-            labelOptions={labelOptions}
-            onAddLabel={handleAddLabel}
-            onExportZip={handleExportZip}
-            hasSelections={selections.length}
-            
-            // Undo/Redo props
-            canUndo={historyPointer > 0}
-            canRedo={historyPointer < history.length - 1}
-            onUndo={handleUndo}
-            onRedo={handleRedo}
+      {/* Routes configuration */}
+      <Routes>
+        <Route path="/" element={
+          <div className="app-workspace">
+            <div className="workspace-main">
+              <Toolbar
+                onFileSelect={handleFileSelect}
+                fileName={fileName}
+                pageCount={pageCount}
+                currentPage={currentPage}
+                onPageChange={setCurrentPage}
+                currentNumber={currentNumber}
+                onNumberChange={setCurrentNumber}
+                currentLabel={currentLabel}
+                onLabelChange={setCurrentLabel}
+                labelOptions={labelOptions}
+                onAddLabel={handleAddLabel}
+                onExportZip={handleExportZip}
+                hasSelections={selections.length}
+                
+                // Edit Mode props
+                isEditMode={isEditMode}
+                onToggleEditMode={() => setIsEditMode(prev => !prev)}
 
-            // Help guide prop
-            onToggleHelp={() => setShowHelp(prev => !prev)}
-          />
+                // Undo/Redo props
+                canUndo={historyPointer > 0}
+                canRedo={historyPointer < history.length - 1}
+                onUndo={handleUndo}
+                onRedo={handleRedo}
 
-          <div className="pdf-viewer-outer">
-            <PDFViewer
-              pdfDoc={pdfDoc}
-              currentPage={currentPage}
+                // Help guide prop
+                onToggleHelp={() => setShowHelp(prev => !prev)}
+              />
+
+              <div className="pdf-viewer-outer">
+                <PDFViewer
+                  pdfDoc={pdfDoc}
+                  currentPage={currentPage}
+                  selections={selections}
+                  onSelectionComplete={handleSelectionComplete}
+                  onDeleteSelection={handleDeleteSelection}
+                  onSelectionUpdateRect={handleSelectionUpdateRect}
+                  onUpdateSelection={handleUpdateSelection}
+                  onPageChange={setCurrentPage}
+                  labelOptions={labelOptions}
+                  isEditMode={isEditMode}
+                  onToggleEditMode={() => setIsEditMode(prev => !prev)}
+                />
+              </div>
+            </div>
+
+            {/* Sidebar Selections Manager */}
+            <SelectionsList
               selections={selections}
-              onSelectionComplete={handleSelectionComplete}
               onDeleteSelection={handleDeleteSelection}
-              onSelectionUpdateRect={handleSelectionUpdateRect}
-              onPageChange={setCurrentPage}
+              onJumpToPage={handleJumpToPage}
+              onClearAll={handleClearAll}
+              onUpdateSelection={handleUpdateSelection}
+              labelOptions={labelOptions}
+              
+              // Sessions List props
+              activeFileName={fileName}
+              savedSessionsList={savedSessionsList}
+              onLoadSession={handleLoadSession}
+              onDeleteSession={handleDeleteSession}
+              onClearAllSessions={handleClearAllSessions}
+              onExportSessionsJSON={handleExportSessionsJSON}
+              onImportSessionsJSON={handleImportSessionsJSON}
             />
           </div>
-        </div>
-
-        {/* Sidebar Selections Manager */}
-        <SelectionsList
-          selections={selections}
-          onDeleteSelection={handleDeleteSelection}
-          onJumpToPage={handleJumpToPage}
-          onClearAll={handleClearAll}
-          onUpdateSelection={handleUpdateSelection}
-          labelOptions={labelOptions}
-          
-          // Sessions List props
-          activeFileName={fileName}
-          savedSessionsList={savedSessionsList}
-          onLoadSession={handleLoadSession}
-          onDeleteSession={handleDeleteSession}
-          onClearAllSessions={handleClearAllSessions}
-          onExportSessionsJSON={handleExportSessionsJSON}
-          onImportSessionsJSON={handleImportSessionsJSON}
-        />
-      </div>
+        } />
+        
+        <Route path="/assembler" element={
+          <Assembler />
+        } />
+      </Routes>
 
       {/* Help Modal Guide */}
       <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />

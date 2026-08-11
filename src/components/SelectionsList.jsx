@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 
 function EditableText({ initialText, onSave }) {
   const [text, setText] = useState(initialText || '');
@@ -26,6 +26,46 @@ function EditableText({ initialText, onSave }) {
   );
 }
 
+function EditableFolderNumber({ initialNumber, onSave, className = "card-edit-number", title = "Change folder number" }) {
+  const [val, setVal] = useState(initialNumber ?? 0);
+  const [prevInitial, setPrevInitial] = useState(initialNumber);
+
+  if (initialNumber !== prevInitial) {
+    setPrevInitial(initialNumber);
+    setVal(initialNumber ?? 0);
+  }
+
+  const handleCommit = () => {
+    const parsed = parseInt(val, 10);
+    const num = isNaN(parsed) ? 0 : Math.max(0, parsed);
+    if (num !== initialNumber) {
+      onSave(num);
+    }
+  };
+
+  return (
+    <input
+      type="number"
+      min="0"
+      className={className}
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onBlur={handleCommit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleCommit();
+          e.target.blur();
+        }
+      }}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      title={title}
+    />
+  );
+}
+
 export default function SelectionsList({
   selections,
   onDeleteSelection,
@@ -46,22 +86,24 @@ export default function SelectionsList({
   const [mobileExpanded, setMobileExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState('selections');
 
-  // Group selections by folder number
-  const groupedSelections = selections.reduce((groups, selection) => {
-    const num = selection.number || 0;
-    if (!groups[num]) {
-      groups[num] = [];
-    }
-    groups[num].push(selection);
-    return groups;
-  }, {});
+  // Group selections by folder number using useMemo
+  const groupedSelections = useMemo(() => {
+    return selections.reduce((groups, selection) => {
+      const num = selection.number || 0;
+      if (!groups[num]) {
+        groups[num] = [];
+      }
+      groups[num].push(selection);
+      return groups;
+    }, {});
+  }, [selections]);
 
-  // Sort folder groups by the index of their most recent selection (newest first)
-  const sortedFolders = Object.keys(groupedSelections).sort((a, b) => {
-    const maxIndexA = Math.max(...groupedSelections[a].map(sel => selections.indexOf(sel)));
-    const maxIndexB = Math.max(...groupedSelections[b].map(sel => selections.indexOf(sel)));
-    return maxIndexB - maxIndexA;
-  });
+  // Sort folder groups in descending numeric order by folder number (#10, #9 ... #1, #0)
+  const sortedFolders = useMemo(() => {
+    return Object.keys(groupedSelections).sort((a, b) => {
+      return b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' });
+    });
+  }, [groupedSelections]);
 
   const toggleMobileExpanded = () => {
     setMobileExpanded(!mobileExpanded);
@@ -192,12 +234,10 @@ export default function SelectionsList({
 
                               {/* Folder number input */}
                               <span className="folder-number-prefix">#</span>
-                              <input
-                                type="number"
+                              <EditableFolderNumber
+                                initialNumber={sel.number}
+                                onSave={(newNum) => onUpdateSelection(sel.id, { number: newNum })}
                                 className="card-edit-number"
-                                min="0"
-                                value={sel.number}
-                                onChange={(e) => onUpdateSelection(sel.id, { number: parseInt(e.target.value, 10) || 0 })}
                                 title="Change folder number"
                               />
                             </div>

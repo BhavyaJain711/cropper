@@ -1,11 +1,56 @@
 import { useState, useEffect, useRef } from 'react';
 
+const getNow = () => Date.now();
+
+function EditableFolderNumber({ initialNumber, onSave, className = "card-edit-number", title = "Change folder number" }) {
+  const [val, setVal] = useState(initialNumber ?? 0);
+  const [prevInitial, setPrevInitial] = useState(initialNumber);
+
+  if (initialNumber !== prevInitial) {
+    setPrevInitial(initialNumber);
+    setVal(initialNumber ?? 0);
+  }
+
+  const handleCommit = () => {
+    const parsed = parseInt(val, 10);
+    const num = isNaN(parsed) ? 0 : Math.max(0, parsed);
+    if (num !== initialNumber) {
+      onSave(num);
+    }
+  };
+
+  return (
+    <input
+      type="number"
+      min="0"
+      className={className}
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onBlur={handleCommit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleCommit();
+          e.target.blur();
+        }
+      }}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      title={title}
+    />
+  );
+}
+
 export default function SelectionOverlay({
   selections,
   currentPage,
   onSelectionComplete,
   onDeleteSelection,
   onSelectionUpdateRect,
+  onUpdateSelection,
+  labelOptions = [],
+  isEditMode = false,
   isCropMode = true
 }) {
   const [startPoint, setStartPoint] = useState(null); // {x, y} in normalized coordinates (0 to 1)
@@ -28,6 +73,7 @@ export default function SelectionOverlay({
     startPoint,
     mousePos,
     isCropMode,
+    isEditMode,
     currentPage,
     selections,
     editingSelectionId,
@@ -40,12 +86,13 @@ export default function SelectionOverlay({
       startPoint,
       mousePos,
       isCropMode,
+      isEditMode,
       currentPage,
       selections,
       editingSelectionId,
       tempDragRect
     };
-  }, [startPoint, mousePos, isCropMode, currentPage, selections, editingSelectionId, tempDragRect]);
+  }, [startPoint, mousePos, isCropMode, isEditMode, currentPage, selections, editingSelectionId, tempDragRect]);
 
   // Listen for Escape key to cancel current selection or exit edit mode
   useEffect(() => {
@@ -82,13 +129,16 @@ export default function SelectionOverlay({
   // Mouse handlers for desktop click-to-select
   const handleMouseDown = (e) => {
     if (Date.now() - lastTouchTimeRef.current < 600) return;
-    if (!isCropMode) return;
+    if (!isCropMode || isEditMode) return;
     if (e.button !== 0) return; // Left click only
 
     if (
       e.target.closest('.selection-delete') ||
       e.target.closest('.selection-edit') ||
       e.target.closest('.resize-handle') ||
+      e.target.closest('select') ||
+      e.target.closest('.selection-badge-select') ||
+      e.target.closest('.selection-badge-number-input') ||
       (stateRef.current.editingSelectionId && e.target.closest('.selection-box.is-editing'))
     ) {
       return;
@@ -121,7 +171,7 @@ export default function SelectionOverlay({
   };
 
   const handleMouseMove = (e) => {
-    if (!isCropMode) return;
+    if (!isCropMode || isEditMode) return;
     if (!startPoint) return;
     const coords = getNormalizedCoordinates(e);
     if (coords) {
@@ -138,7 +188,7 @@ export default function SelectionOverlay({
     const handleTouchStart = (e) => {
       lastTouchTimeRef.current = Date.now();
       const state = stateRef.current;
-      if (!state.isCropMode) return;
+      if (!state.isCropMode || state.isEditMode) return;
 
       // If multi-touch (two or more fingers), ignore drawing selection to allow zoom/pinch/pan.
       if (e.touches && e.touches.length > 1) {
@@ -147,11 +197,14 @@ export default function SelectionOverlay({
         return;
       }
 
-      // If touching buttons, resize handles, or the active editing box body, ignore canvas drawing start
+      // If touching buttons, resize handles, select dropdowns, or active editing box body, ignore canvas drawing start
       if (
         e.target.closest('.selection-delete') ||
         e.target.closest('.selection-edit') ||
         e.target.closest('.resize-handle') ||
+        e.target.closest('select') ||
+        e.target.closest('.selection-badge-select') ||
+        e.target.closest('.selection-badge-number-input') ||
         (state.editingSelectionId && e.target.closest('.selection-box.is-editing'))
       ) {
         return;
@@ -230,14 +283,14 @@ export default function SelectionOverlay({
   };
 
   const handleBoxMouseDown = (e, id, handle, originalRect) => {
-    if (Date.now() - lastTouchTimeRef.current < 600) return;
+    if (getNow() - lastTouchTimeRef.current < 600) return;
     if (e.button !== 0) return; // Left click only
     e.stopPropagation();
     startDrag(id, handle, e.clientX, e.clientY, originalRect);
   };
 
   const handleBoxTouchStart = (e, id, handle, originalRect) => {
-    lastTouchTimeRef.current = Date.now();
+    lastTouchTimeRef.current = getNow();
     e.stopPropagation();
     if (e.touches && e.touches.length === 1) {
       startDrag(id, handle, e.touches[0].clientX, e.touches[0].clientY, originalRect);
@@ -383,8 +436,46 @@ export default function SelectionOverlay({
             onTouchStart={(e) => isEditingThis && handleBoxTouchStart(e, sel.id, 'move', targetRect)}
           >
             <div className="selection-badge">
-              <span className="selection-badge-folder">#{sel.number}</span>
-              <span className="selection-badge-label">{sel.label}</span>
+              {isEditMode ? (
+                <span className="selection-badge-folder">
+                  #
+                  <EditableFolderNumber
+                    initialNumber={sel.number}
+                    onSave={(newNum) => onUpdateSelection && onUpdateSelection(sel.id, { number: newNum })}
+                    className="selection-badge-number-input"
+                    title="Change folder number"
+                  />
+                </span>
+              ) : (
+                <span className="selection-badge-folder">#{sel.number}</span>
+              )}
+              {isEditMode ? (
+                <select
+                  className="selection-badge-select"
+                  value={sel.label}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    if (onUpdateSelection) {
+                      onUpdateSelection(sel.id, { label: e.target.value });
+                    }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onTouchStart={(e) => e.stopPropagation()}
+                  title="Change label"
+                >
+                  {labelOptions.map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                  {!labelOptions.includes(sel.label) && (
+                    <option value={sel.label}>{sel.label}</option>
+                  )}
+                </select>
+              ) : (
+                <span className="selection-badge-label">{sel.label}</span>
+              )}
             </div>
 
             {/* Corner Resize Handles - Only visible in edit mode */}
