@@ -11,7 +11,8 @@ export default function PDFViewer({
   onUpdateSelection,
   labelOptions,
   isEditMode,
-  onToggleEditMode
+  onToggleEditMode,
+  onSelectionContextMenu
 }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -204,6 +205,7 @@ export default function PDFViewer({
               labelOptions={labelOptions}
               isEditMode={isEditMode}
               isCropMode={isCropMode}
+              onSelectionContextMenu={onSelectionContextMenu}
             />
           )}
         </div>

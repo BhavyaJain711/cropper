@@ -1,12 +1,19 @@
 import { useState, useMemo } from 'react';
 import { parseExtractionZip, mergeManifests, sortEntriesByLabelOrder } from '../utils/zipParser';
 import { generateAssembledPDF } from '../utils/pdfGenerator';
+import { generateAssembledDOCX } from '../utils/docxGenerator';
 
 export default function Assembler() {
   const [uploadedZips, setUploadedZips] = useState([]); // [{ name, allLabels, entries: [...] }]
   const [isParsing, setIsParsing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingDocx, setIsGeneratingDocx] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  
+  // Folder range filtering state
+  const [folderRange, setFolderRange] = useState('');
+  const [fromFolder, setFromFolder] = useState('');
+  const [toFolder, setToFolder] = useState('');
   
   // User ordered list of labels
   const [labelOrder, setLabelOrder] = useState([]);
@@ -191,12 +198,121 @@ export default function Assembler() {
     });
   }, [folders]);
 
+  // Compute stats on uploaded folder numbers (min & max for UI placeholders)
+  const folderStats = useMemo(() => {
+    const keys = Object.keys(folders);
+    let min = Infinity;
+    let max = -Infinity;
+    keys.forEach((k) => {
+      const n = parseInt(k, 10);
+      if (!isNaN(n)) {
+        if (n < min) min = n;
+        if (n > max) max = n;
+      }
+    });
+    return {
+      totalFolders: keys.length,
+      minFolder: min !== Infinity ? min : null,
+      maxFolder: max !== -Infinity ? max : null
+    };
+  }, [folders]);
+
+  // Helper to test if a folder number/key is within specified range expression
+  const isFolderInRange = (folderKey, rangeStr) => {
+    if (!rangeStr || !rangeStr.trim()) return true;
+
+    const num = parseInt(folderKey, 10);
+    const parts = rangeStr.split(',').map((s) => s.trim()).filter(Boolean);
+
+    for (const part of parts) {
+      if (part.includes('-')) {
+        const rangeParts = part.split('-');
+        const startStr = rangeParts[0].trim();
+        const endStr = rangeParts[1].trim();
+
+        const start = startStr !== '' ? parseInt(startStr, 10) : -Infinity;
+        const end = endStr !== '' ? parseInt(endStr, 10) : Infinity;
+
+        if (!isNaN(num)) {
+          const startNum = isNaN(start) ? -Infinity : start;
+          const endNum = isNaN(end) ? Infinity : end;
+          if (num >= startNum && num <= endNum) return true;
+        } else {
+          if (folderKey >= startStr && folderKey <= endStr) return true;
+        }
+      } else {
+        const singleNum = parseInt(part, 10);
+        if (!isNaN(num) && !isNaN(singleNum)) {
+          if (num === singleNum) return true;
+        } else {
+          if (folderKey === part) return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  // Folder keys after applying folderRange filter
+  const filteredFolderKeys = useMemo(() => {
+    if (!folderRange.trim()) return sortedFolderKeys;
+    return sortedFolderKeys.filter((key) => isFolderInRange(key, folderRange));
+  }, [sortedFolderKeys, folderRange]);
+
+  // Filtered folders map for PDF generation
+  const filteredFolders = useMemo(() => {
+    if (!folderRange.trim()) return folders;
+    const result = {};
+    filteredFolderKeys.forEach((key) => {
+      result[key] = folders[key];
+    });
+    return result;
+  }, [folders, filteredFolderKeys, folderRange]);
+
+  // Handlers for From / To / Custom Range inputs
+  const updateRangeFromTo = (fromVal, toVal) => {
+    if (fromVal !== '' || toVal !== '') {
+      const f = fromVal !== '' ? fromVal : '';
+      const t = toVal !== '' ? toVal : '';
+      setFolderRange(`${f}-${t}`);
+    } else {
+      setFolderRange('');
+    }
+  };
+
+  const handleFromChange = (e) => {
+    const val = e.target.value;
+    setFromFolder(val);
+    updateRangeFromTo(val, toFolder);
+  };
+
+  const handleToChange = (e) => {
+    const val = e.target.value;
+    setToFolder(val);
+    updateRangeFromTo(fromFolder, val);
+  };
+
+  const handleRangeTextChange = (e) => {
+    const val = e.target.value;
+    setFolderRange(val);
+    if (val.includes('-') && !val.includes(',')) {
+      const [f, t] = val.split('-').map((s) => s.trim());
+      setFromFolder(f || '');
+      setToFolder(t || '');
+    } else if (!val) {
+      setFromFolder('');
+      setToFolder('');
+    } else {
+      setFromFolder('');
+      setToFolder('');
+    }
+  };
+
   // Generate and download the assembled PDF
   const handleGeneratePDF = async () => {
-    if (sortedFolderKeys.length === 0) return;
+    if (filteredFolderKeys.length === 0) return;
     setIsGenerating(true);
     try {
-      const pdfBlob = await generateAssembledPDF(folders, labelOrder, pdfOptions);
+      const pdfBlob = await generateAssembledPDF(filteredFolders, labelOrder, pdfOptions);
       const url = URL.createObjectURL(pdfBlob);
       const a = document.createElement('a');
       a.href = url;
@@ -210,6 +326,28 @@ export default function Assembler() {
       alert('Error generating PDF: ' + err.message);
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  // Generate and download the assembled Word Document (.docx)
+  const handleGenerateDOCX = async () => {
+    if (filteredFolderKeys.length === 0) return;
+    setIsGeneratingDocx(true);
+    try {
+      const docxBlob = await generateAssembledDOCX(filteredFolders, labelOrder, pdfOptions);
+      const url = URL.createObjectURL(docxBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `assembled_document_${new Date().toISOString().split('T')[0]}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      alert('Error generating Word Document: ' + err.message);
+    } finally {
+      setIsGeneratingDocx(false);
     }
   };
 
@@ -374,6 +512,71 @@ export default function Assembler() {
             <div className="pdf-settings-panel">
               <h3>PDF Styling & Settings</h3>
               
+              {/* Folder Range Filter Block */}
+              <div className="settings-form-group folder-range-group" style={{ background: 'rgba(139, 92, 246, 0.05)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(139, 92, 246, 0.15)', marginBottom: '20px' }}>
+                <label htmlFor="pdf-folder-range" style={{ color: 'var(--accent-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                  </svg>
+                  Folder Range Filter
+                </label>
+
+                <div className="range-inputs-row" style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '8px', marginBottom: '8px' }}>
+                  <div style={{ flex: 1 }}>
+                    <input
+                      type="number"
+                      placeholder={folderStats.minFolder !== null ? `From (${folderStats.minFolder})` : 'From'}
+                      value={fromFolder}
+                      onChange={handleFromChange}
+                      title="Start of folder range"
+                    />
+                  </div>
+                  <span className="range-separator" style={{ color: 'var(--text-tertiary)', fontSize: '13px', fontWeight: 500 }}>to</span>
+                  <div style={{ flex: 1 }}>
+                    <input
+                      type="number"
+                      placeholder={folderStats.maxFolder !== null ? `To (${folderStats.maxFolder})` : 'To'}
+                      value={toFolder}
+                      onChange={handleToChange}
+                      title="End of folder range"
+                    />
+                  </div>
+                </div>
+
+                <input
+                  type="text"
+                  id="pdf-folder-range"
+                  placeholder={folderStats.minFolder !== null ? `e.g. ${folderStats.minFolder}-${folderStats.maxFolder} or 1-5, 8` : 'e.g. 1-10 or 1, 3, 5-8'}
+                  value={folderRange}
+                  onChange={handleRangeTextChange}
+                  style={{ fontFamily: 'monospace', fontSize: '13px' }}
+                />
+
+                <span className="setting-help-text" style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '6px', lineHeight: '1.4' }}>
+                  Use ranges like <code>1-10</code>, <code>1, 3, 5-8</code>, or <code>10-</code>.
+                </span>
+
+                {folderRange.trim() && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed rgba(139, 92, 246, 0.2)' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: filteredFolderKeys.length > 0 ? 'var(--accent-secondary)' : '#ef4444' }}>
+                      {filteredFolderKeys.length} of {sortedFolderKeys.length} folders
+                    </span>
+                    <button 
+                      type="button" 
+                      className="btn-secondary"
+                      style={{ padding: '2px 8px', fontSize: '11px', height: 'auto', borderRadius: '4px' }}
+                      onClick={() => {
+                        setFolderRange('');
+                        setFromFolder('');
+                        setToFolder('');
+                      }}
+                    >
+                      Clear Range
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <div className="settings-form-group">
                 <label htmlFor="pdf-page-size">Page Size</label>
                 <select
@@ -413,8 +616,6 @@ export default function Assembler() {
                   </div>
                 </label>
               </div>
-
-
 
               <div className="settings-toggle-group">
                 <label className="toggle-switch-container">
@@ -513,43 +714,87 @@ export default function Assembler() {
                 />
               </div>
 
+              <div className="action-buttons-group" style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '16px' }}>
+                <button
+                  className="btn-primary btn-lg btn-full-width"
+                  disabled={filteredFolderKeys.length === 0 || isGenerating || isGeneratingDocx}
+                  onClick={handleGeneratePDF}
+                >
+                  {isGenerating ? (
+                    <>
+                      <div className="spinner-sm spinner-white"></div>
+                      Generating PDF...
+                    </>
+                  ) : (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '8px' }}>
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+                      </svg>
+                      Assemble & Build PDF
+                    </>
+                  )}
+                </button>
 
-
-              <button
-                className="btn-primary btn-lg btn-full-width"
-                disabled={sortedFolderKeys.length === 0 || isGenerating}
-                onClick={handleGeneratePDF}
-              >
-                {isGenerating ? (
-                  <>
-                    <div className="spinner-sm spinner-white"></div>
-                    Generating PDF...
-                  </>
-                ) : (
-                  <>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '8px' }}>
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
-                    </svg>
-                    Assemble & Build PDF
-                  </>
-                )}
-              </button>
+                <button
+                  className="btn-secondary btn-lg btn-full-width btn-export-docx"
+                  disabled={filteredFolderKeys.length === 0 || isGenerating || isGeneratingDocx}
+                  onClick={handleGenerateDOCX}
+                  style={{
+                    background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)',
+                    color: '#ffffff',
+                    border: '1px solid rgba(37, 99, 235, 0.3)',
+                    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.25)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: (filteredFolderKeys.length === 0 || isGenerating || isGeneratingDocx) ? 'not-allowed' : 'pointer',
+                    opacity: (filteredFolderKeys.length === 0 || isGenerating || isGeneratingDocx) ? 0.5 : 1
+                  }}
+                >
+                  {isGeneratingDocx ? (
+                    <>
+                      <div className="spinner-sm spinner-white"></div>
+                      Generating Word Doc...
+                    </>
+                  ) : (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '8px' }}>
+                        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="16" y1="13" x2="8" y2="13"/>
+                        <line x1="16" y1="17" x2="8" y2="17"/>
+                        <line x1="10" y1="9" x2="8" y2="9"/>
+                      </svg>
+                      Export Word Document (.docx)
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
             {/* Right Column: Visual Preview Rows */}
             <div className="preview-display-panel">
               <div className="preview-panel-header">
-                <h3>Assembled Folders Preview ({sortedFolderKeys.length})</h3>
-                <span className="preview-count-meta">Sorted numerically</span>
+                <h3>
+                  Assembled Folders Preview ({filteredFolderKeys.length}
+                  {sortedFolderKeys.length !== filteredFolderKeys.length ? ` of ${sortedFolderKeys.length}` : ''})
+                </h3>
+                <span className="preview-count-meta">
+                  {folderRange.trim() ? `Filtered by range "${folderRange}"` : 'Sorted numerically'}
+                </span>
               </div>
 
               <div className="preview-rows-container">
-                {sortedFolderKeys.length === 0 ? (
-                  <div className="empty-preview-state">
-                    <span>No preview available. Upload zip archives above.</span>
+                {filteredFolderKeys.length === 0 ? (
+                  <div className="empty-preview-state" style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-tertiary)' }}>
+                    <span>
+                      {sortedFolderKeys.length === 0
+                        ? 'No preview available. Upload zip archives above.'
+                        : `No folders match the range filter "${folderRange}".`}
+                    </span>
                   </div>
                 ) : (
-                  sortedFolderKeys.map((folderNum) => {
+                  filteredFolderKeys.map((folderNum) => {
                     const rawEntries = folders[folderNum] || [];
                     const sortedEntries = sortEntriesByLabelOrder(rawEntries, labelOrder, pdfOptions.separateLabelsByZip);
 

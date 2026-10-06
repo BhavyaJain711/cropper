@@ -51,7 +51,8 @@ export default function SelectionOverlay({
   onUpdateSelection,
   labelOptions = [],
   isEditMode = false,
-  isCropMode = true
+  isCropMode = true,
+  onSelectionContextMenu
 }) {
   const [startPoint, setStartPoint] = useState(null); // {x, y} in normalized coordinates (0 to 1)
   const [mousePos, setMousePos] = useState(null); // {x, y} in normalized coordinates (0 to 1)
@@ -404,12 +405,46 @@ export default function SelectionOverlay({
     }
   };
 
+  const handleContainerContextMenu = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // 1. If clicked directly on or inside a selection box element
+    const boxEl = e.target.closest('.selection-box');
+    if (boxEl && boxEl.dataset.selectionId) {
+      const found = pageSelections.find((s) => s.id === boxEl.dataset.selectionId);
+      if (found) {
+        onSelectionContextMenu && onSelectionContextMenu(e, found);
+        return;
+      }
+    }
+
+    // 2. Fallback: Check normalized coordinates against existing page selections
+    const coords = getNormalizedCoordinates(e);
+    if (!coords) return;
+
+    // Check newest / topmost selection first
+    const matchedSel = [...pageSelections].reverse().find((sel) => {
+      const targetRect = (editingSelectionId === sel.id && tempDragRect) ? tempDragRect : sel.rect;
+      const minX = Math.min(targetRect.x1, targetRect.x2);
+      const maxX = Math.max(targetRect.x1, targetRect.x2);
+      const minY = Math.min(targetRect.y1, targetRect.y2);
+      const maxY = Math.max(targetRect.y1, targetRect.y2);
+      return coords.x >= minX && coords.x <= maxX && coords.y >= minY && coords.y <= maxY;
+    });
+
+    if (matchedSel) {
+      onSelectionContextMenu && onSelectionContextMenu(e, matchedSel);
+    }
+  };
+
   return (
     <div
       ref={containerRef}
       className={`selection-overlay-container ${startPoint ? 'selecting' : ''}`}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
+      onContextMenu={handleContainerContextMenu}
       style={{ pointerEvents: isCropMode ? 'auto' : 'none' }}
     >
       {/* Existing selections on current page */}
@@ -425,6 +460,7 @@ export default function SelectionOverlay({
         return (
           <div
             key={sel.id}
+            data-selection-id={sel.id}
             className={`selection-box ${isEditingThis ? 'is-editing' : ''}`}
             style={{
               left: `${x}%`,
@@ -434,8 +470,20 @@ export default function SelectionOverlay({
             }}
             onMouseDown={(e) => isEditingThis && handleBoxMouseDown(e, sel.id, 'move', targetRect)}
             onTouchStart={(e) => isEditingThis && handleBoxTouchStart(e, sel.id, 'move', targetRect)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onSelectionContextMenu && onSelectionContextMenu(e, sel);
+            }}
           >
-            <div className="selection-badge">
+            <div 
+              className="selection-badge"
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onSelectionContextMenu && onSelectionContextMenu(e, sel);
+              }}
+            >
               {isEditMode ? (
                 <span className="selection-badge-folder">
                   #

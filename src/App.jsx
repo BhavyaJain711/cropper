@@ -5,8 +5,12 @@ import PDFViewer from './components/PDFViewer';
 import SelectionsList from './components/SelectionsList';
 import HelpModal from './components/HelpModal';
 import Assembler from './components/Assembler';
+import SelectionContextMenu from './components/SelectionContextMenu';
+import Toast from './components/Toast';
 import { loadPDF, extractTextInRegion, cropCanvasRegion } from './utils/pdfUtils';
+import { copyImageToClipboard, copyTextToClipboard } from './utils/clipboardUtils';
 import { exportZip } from './utils/exportZip';
+import { exportSelectionsDOCX } from './utils/docxGenerator';
 import { saveSessionMetadata, addOrUpdateSelectionInDB, deleteSelectionFromDB, getSession, deleteSession, getAllSessions, clearAllSessions, importAllSessions } from './utils/db';
 import './App.css';
 
@@ -112,6 +116,66 @@ export default function App() {
 
   // Help guide modal state
   const [showHelp, setShowHelp] = useState(false);
+
+  // Right-click context menu state for selections
+  const [contextMenu, setContextMenu] = useState(null); // { x, y, selection }
+
+  // Global toast feedback notifications
+  const [toast, setToast] = useState(null); // { message, type, id }
+
+  const handleSelectionContextMenu = (e, selection) => {
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      selection
+    });
+  };
+
+  const handleCloseContextMenu = () => {
+    setContextMenu(null);
+  };
+
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type, id: Date.now() });
+  };
+
+  const handleCopySelectionImage = async (selection) => {
+    try {
+      let source = selection.imageBlob || selection.imageDataUrl;
+
+      // If missing, crop directly from the PDF page on demand
+      if (!source && pdfDoc && selection.rect && selection.page) {
+        const page = await pdfDoc.getPage(selection.page);
+        const crop = await cropCanvasRegion(page, selection.rect);
+        source = crop?.blob || crop?.dataUrl;
+      }
+
+      if (!source) {
+        throw new Error('Selection image is not available.');
+      }
+
+      await copyImageToClipboard(source);
+      showToast(`Copied #${selection.number} ${selection.label} as image!`, 'success');
+    } catch (err) {
+      console.error('Failed to copy selection image:', err);
+      showToast(err.message || 'Could not copy image to clipboard', 'error');
+      throw err;
+    }
+  };
+
+  const handleCopySelectionText = async (selection) => {
+    try {
+      if (!selection.text || !selection.text.trim()) {
+        showToast('No text layer found for this selection', 'error');
+        return;
+      }
+      await copyTextToClipboard(selection.text);
+      showToast(`Copied text for #${selection.number} ${selection.label}!`, 'success');
+    } catch (err) {
+      console.error('Failed to copy selection text:', err);
+      showToast(err.message || 'Could not copy text', 'error');
+    }
+  };
 
   const updateSelectionsWithHistory = (newSelections) => {
     setSelections(newSelections);
@@ -604,6 +668,18 @@ export default function App() {
     }
   };
 
+  const handleExportDocx = async () => {
+    try {
+      setIsProcessing(true);
+      await exportSelectionsDOCX(selections, fileName || 'selections');
+      setIsProcessing(false);
+    } catch (err) {
+      console.error('Error during DOCX creation:', err);
+      alert('Failed to generate Word document: ' + err.message);
+      setIsProcessing(false);
+    }
+  };
+
   const handleJumpToPage = (pageNum) => {
     if (pageNum >= 1 && pageNum <= pageCount) {
       setCurrentPage(pageNum);
@@ -658,6 +734,7 @@ export default function App() {
                 labelOptions={labelOptions}
                 onAddLabel={handleAddLabel}
                 onExportZip={handleExportZip}
+                onExportDocx={handleExportDocx}
                 hasSelections={selections.length}
                 
                 // Edit Mode props
@@ -687,6 +764,7 @@ export default function App() {
                   labelOptions={labelOptions}
                   isEditMode={isEditMode}
                   onToggleEditMode={() => setIsEditMode(prev => !prev)}
+                  onSelectionContextMenu={handleSelectionContextMenu}
                 />
               </div>
             </div>
@@ -708,6 +786,8 @@ export default function App() {
               onClearAllSessions={handleClearAllSessions}
               onExportSessionsJSON={handleExportSessionsJSON}
               onImportSessionsJSON={handleImportSessionsJSON}
+              onSelectionContextMenu={handleSelectionContextMenu}
+              onCopySelectionImage={handleCopySelectionImage}
             />
           </div>
         } />
@@ -719,6 +799,20 @@ export default function App() {
 
       {/* Help Modal Guide */}
       <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
+
+      {/* Selection Right-Click Context Menu */}
+      <SelectionContextMenu
+        isOpen={Boolean(contextMenu)}
+        position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
+        selection={contextMenu?.selection}
+        onClose={handleCloseContextMenu}
+        onCopyImage={handleCopySelectionImage}
+        onCopyText={handleCopySelectionText}
+        onDelete={(sel) => handleDeleteSelection(sel.id)}
+      />
+
+      {/* Global Toast Feedback */}
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }
