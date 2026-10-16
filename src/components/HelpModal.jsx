@@ -75,6 +75,10 @@ export default function HelpModal({ isOpen, onClose }) {
                 <span className="shortcut-desc">Change Folder Group #</span>
               </div>
               <div className="shortcut-row">
+                <span className="shortcut-keys"><kbd>T</kbd></span>
+                <span className="shortcut-desc">Next 10s Folder # (e.g. 1021 → 1030)</span>
+              </div>
+              <div className="shortcut-row">
                 <span className="shortcut-keys"><kbd>Ctrl/⌘</kbd> + <kbd>Z</kbd></span>
                 <span className="shortcut-desc">Undo Selection Crop</span>
               </div>

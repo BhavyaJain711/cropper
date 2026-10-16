@@ -195,6 +195,7 @@ export default function Toolbar({
                   min="0"
                   className="input-number"
                   value={currentNumber}
+                  title="Folder number (Press T to jump to next tens digit)"
                   onChange={(e) => onNumberChange(parseInt(e.target.value, 10) || 0)}
                 />
                 <button

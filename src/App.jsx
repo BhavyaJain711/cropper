@@ -301,6 +301,12 @@ export default function App() {
         setShowHelp(prev => !prev);
       }
 
+      // Increment folder number to next tens digit on 't' or 'T' key (e.g. 1021 -> 1030, 1020 -> 1030)
+      if (e.key.toLowerCase() === 't' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setCurrentNumber(prev => (Math.floor((Number(prev) || 0) / 10) + 1) * 10);
+      }
+
       // Toggle edit mode on 'e' or 'E' key
       if (e.key.toLowerCase() === 'e' && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
