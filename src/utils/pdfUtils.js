@@ -209,16 +209,16 @@ export async function cropCanvasRegion(pageObj, rect, renderScale = 3.0) {
     0, 0, width, height
   );
 
-  return new Promise((resolve) => {
-    cropCanvas.toBlob((blob) => {
-      if (!blob) {
-        resolve(null);
-        return;
-      }
-      resolve({
-        dataUrl: cropCanvas.toDataURL('image/png'),
-        blob: blob
-      });
-    }, 'image/png');
-  });
+  const dataUrl = cropCanvas.toDataURL('image/png');
+
+  // Immediately clear canvas dimensions to release backing buffers from GPU/RAM
+  offscreenCanvas.width = 0;
+  offscreenCanvas.height = 0;
+  cropCanvas.width = 0;
+  cropCanvas.height = 0;
+
+  return {
+    dataUrl
+  };
 }
+

@@ -60,8 +60,62 @@ export async function parseExtractionZip(file) {
 }
 
 /**
+ * Extracts the top Y coordinate (position) of an extraction entry or selection.
+ * @param {Object} entry 
+ * @returns {number}
+ */
+export function getEntryY(entry) {
+  if (!entry) return 0;
+  const rect = entry.rect;
+  if (rect) {
+    if (typeof rect.y1 === 'number' && typeof rect.y2 === 'number') {
+      return Math.min(rect.y1, rect.y2);
+    }
+    if (typeof rect.y1 === 'number') return rect.y1;
+    if (typeof rect.y === 'number') return rect.y;
+    if (typeof rect.top === 'number') return rect.top;
+  }
+  if (typeof entry.y1 === 'number') return entry.y1;
+  if (typeof entry.y === 'number') return entry.y;
+  return 0;
+}
+
+/**
+ * Extracts the page number of an extraction entry or selection as an integer.
+ * @param {Object} entry 
+ * @returns {number}
+ */
+export function getEntryPage(entry) {
+  if (!entry) return 0;
+  const p = parseInt(entry.page, 10);
+  return isNaN(p) ? 0 : p;
+}
+
+/**
+ * Compares two entries ascending by page number, then ascending by top Y position (y-axis).
+ * @param {Object} a 
+ * @param {Object} b 
+ * @returns {number}
+ */
+export function compareEntriesByPageAndY(a, b) {
+  const pageA = getEntryPage(a);
+  const pageB = getEntryPage(b);
+  if (pageA !== pageB) {
+    return pageA - pageB;
+  }
+  const yA = getEntryY(a);
+  const yB = getEntryY(b);
+  if (yA !== yB) {
+    return yA - yB;
+  }
+  const xA = a?.rect ? Math.min(a.rect.x1 ?? 0, a.rect.x2 ?? 0) : (a?.x ?? 0);
+  const xB = b?.rect ? Math.min(b.rect.x1 ?? 0, b.rect.x2 ?? 0) : (b?.x ?? 0);
+  return xA - xB;
+}
+
+/**
  * Merges manifest entries from multiple parsed ZIP files.
- * Groups them by folder number, keeping stable ordering for duplicate folder+label pairs.
+ * Groups them by folder number, sorting entries by page number and y-axis position.
  * @param {Array<Object>} parsedZips 
  * @returns {Object} { folders: { [folderNum]: Array<Entry> }, allLabels: Array<string> }
  */
@@ -84,6 +138,11 @@ export function mergeManifests(parsedZips) {
     }
   }
   
+  // Sort entries within each folder by page number ascending, then y-axis ascending
+  for (const folderNum in folders) {
+    folders[folderNum].sort(compareEntriesByPageAndY);
+  }
+
   return {
     folders,
     allLabels: Array.from(labelsSet)
@@ -92,7 +151,7 @@ export function mergeManifests(parsedZips) {
 
 /**
  * Stable-sorts folder entries based on a specified label order.
- * If a folder has multiple entries with the same label, it maintains their original relative order.
+ * Maintains page number & y-axis position ordering for duplicate folder+label pairs.
  * @param {Array<Object>} entries 
  * @param {Array<string>} labelOrder 
  * @returns {Array<Object>} Sorted entries
@@ -106,7 +165,7 @@ export function sortEntriesByLabelOrder(entries, labelOrder, separateLabelsByZip
     labelRanks[lbl] = idx;
   });
   
-  // We perform a stable sort using the original array index as a fallback
+  // We perform a sort using label rank, falling back to page number & y-axis position
   return [...entries]
     .map((entry, originalIdx) => ({ entry, originalIdx }))
     .sort((a, b) => {
@@ -118,6 +177,10 @@ export function sortEntriesByLabelOrder(entries, labelOrder, separateLabelsByZip
       
       if (rankA !== rankB) {
         return rankA - rankB;
+      }
+      const pageComp = compareEntriesByPageAndY(a.entry, b.entry);
+      if (pageComp !== 0) {
+        return pageComp;
       }
       return a.originalIdx - b.originalIdx;
     })

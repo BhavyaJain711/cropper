@@ -53,6 +53,7 @@ export default function PDFViewer({
         if (!canvas) return;
 
         const context = canvas.getContext('2d');
+        context.clearRect(0, 0, canvas.width, canvas.height);
         canvas.height = viewport.height;
         canvas.width = viewport.width;
 
@@ -68,7 +69,24 @@ export default function PDFViewer({
         
         if (isCurrent) {
           setRenderedViewport(viewport);
-          setRenderedPageObj(page);
+          setRenderedPageObj((prevPage) => {
+            if (prevPage && prevPage !== page) {
+              try {
+                prevPage.cleanup();
+              } catch {
+                // ignore
+              }
+            }
+            return page;
+          });
+
+          // Instruct PDF.js to release document-level font and image caches for non-active pages
+          try {
+            pdfDoc.cleanup();
+          } catch {
+            // ignore
+          }
+
           setLoading(false);
         }
       } catch (err) {
@@ -94,16 +112,34 @@ export default function PDFViewer({
     };
   }, [pdfDoc, currentPage, scale]);
 
+  // Clean up rendered page object when component unmounts
+  useEffect(() => {
+    return () => {
+      if (renderedPageObj) {
+        try {
+          renderedPageObj.cleanup();
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, [renderedPageObj]);
+
   const handleZoomIn = () => setScale(prev => Math.min(prev + 0.2, 3));
   const handleZoomOut = () => setScale(prev => Math.max(prev - 0.2, 0.6));
   const handleZoomReset = () => {
-    if (!containerRef.current || !canvasRef.current) return;
+    if (!containerRef.current || !canvasRef.current || !pdfDoc) return;
     // Calculate scale to fit width
     const containerWidth = containerRef.current.clientWidth - 40;
     pdfDoc.getPage(currentPage).then(page => {
       const originalViewport = page.getViewport({ scale: 1 });
       const fitScale = containerWidth / originalViewport.width;
       setScale(Math.round(fitScale * 10) / 10);
+      try {
+        page.cleanup();
+      } catch {
+        // ignore
+      }
     });
   };
 

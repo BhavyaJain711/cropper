@@ -1,8 +1,11 @@
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
+import { compareEntriesByPageAndY } from './zipParser';
+import { dataURLtoBlob } from './clipboardUtils';
 
 /**
  * Generates and downloads a ZIP file of all cropped selections and metadata.
+ * Selections are sorted by folder number, page number (ascending), and y-axis position (ascending).
  * @param {Array<Object>} selections - Array of selection objects
  * @param {string} pdfName - Original PDF filename (to base the ZIP name on)
  */
@@ -10,6 +13,16 @@ export async function exportZip(selections, pdfName = 'selections') {
   if (!selections || selections.length === 0) {
     throw new Error('No selections to export');
   }
+
+  // Sort selections numerically by folder number, then ascending by page and y-axis position
+  const sortedSelections = [...selections].sort((a, b) => {
+    const numA = parseInt(a.number, 10);
+    const numB = parseInt(b.number, 10);
+    if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+      return numA - numB;
+    }
+    return compareEntriesByPageAndY(a, b);
+  });
 
   const zip = new JSZip();
   
@@ -20,7 +33,7 @@ export async function exportZip(selections, pdfName = 'selections') {
   // Array to hold index records for manifest.json
   const manifestData = [];
 
-  for (const sel of selections) {
+  for (const sel of sortedSelections) {
     const folderNum = String(sel.number || 0).trim() || '0';
     const labelName = String(sel.label || 'extract').trim() || 'extract';
 
@@ -43,7 +56,13 @@ export async function exportZip(selections, pdfName = 'selections') {
     // 1. Add image to zip if it exists
     if (sel.imageBlob) {
       zip.file(imagePath, sel.imageBlob);
+    } else if (sel.imageDataUrl) {
+      const blob = dataURLtoBlob(sel.imageDataUrl);
+      if (blob) {
+        zip.file(imagePath, blob);
+      }
     }
+
 
     // 2. Prepare selection metadata JSON
     const metadata = {

@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { compareEntriesByPageAndY } from '../utils/zipParser';
 
 function EditableText({ initialText, onSave }) {
   const [text, setText] = useState(initialText || '');
@@ -77,6 +78,7 @@ export default function SelectionsList({
   // Sessions management
   activeFileName,
   savedSessionsList = {},
+  onRefreshSessions,
   onLoadSession,
   onDeleteSession,
   onClearAllSessions,
@@ -88,16 +90,29 @@ export default function SelectionsList({
   const [mobileExpanded, setMobileExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState('selections');
 
+  const handleSwitchTab = (tab) => {
+    setActiveTab(tab);
+    if (tab === 'sessions' && onRefreshSessions) {
+      onRefreshSessions();
+    }
+  };
+
   // Group selections by folder number using useMemo
   const groupedSelections = useMemo(() => {
-    return selections.reduce((groups, selection) => {
+    const groups = selections.reduce((acc, selection) => {
       const num = selection.number || 0;
-      if (!groups[num]) {
-        groups[num] = [];
+      if (!acc[num]) {
+        acc[num] = [];
       }
-      groups[num].push(selection);
-      return groups;
+      acc[num].push(selection);
+      return acc;
     }, {});
+
+    Object.keys(groups).forEach((num) => {
+      groups[num].sort(compareEntriesByPageAndY);
+    });
+
+    return groups;
   }, [selections]);
 
   // Sort folder groups in descending numeric order by folder number (#10, #9 ... #1, #0)
@@ -151,14 +166,14 @@ export default function SelectionsList({
       <div className="sidebar-tabs">
         <button
           className={`sidebar-tab ${activeTab === 'selections' ? 'active' : ''}`}
-          onClick={() => setActiveTab('selections')}
+          onClick={() => handleSwitchTab('selections')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/><line x1="9" y1="19" x2="15" y2="19"/><line x1="9" y1="11" x2="10" y2="11"/></svg>
           Active Crop ({selections.length})
         </button>
         <button
           className={`sidebar-tab ${activeTab === 'sessions' ? 'active' : ''}`}
-          onClick={() => setActiveTab('sessions')}
+          onClick={() => handleSwitchTab('sessions')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
           Saved Projects ({savedSessionsKeys.length})
@@ -209,7 +224,7 @@ export default function SelectionsList({
                     </div>
                     
                     <div className="folder-group-items">
-                      {[...groupedSelections[folderNum]].reverse().map((sel) => (
+                      {groupedSelections[folderNum].map((sel) => (
                         <div 
                           key={sel.id} 
                           className="selection-card"

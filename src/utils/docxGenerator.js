@@ -1,6 +1,6 @@
 import { Document, Packer, Paragraph, TextRun, ImageRun, PageBreak, AlignmentType, BorderStyle } from 'docx';
 import { saveAs } from 'file-saver';
-import { sortEntriesByLabelOrder } from './zipParser';
+import { sortEntriesByLabelOrder, compareEntriesByPageAndY } from './zipParser';
 
 /**
  * Loads image dimensions from a Data URL or Blob URL.
@@ -280,7 +280,7 @@ export async function exportSelectionsDOCX(selections, pdfName = 'selections') {
   let isFirstFolder = true;
 
   for (const folderNum of sortedFolderNums) {
-    const folderItems = grouped[folderNum];
+    const folderItems = [...grouped[folderNum]].sort(compareEntriesByPageAndY);
 
     if (!isFirstFolder) {
       children.push(

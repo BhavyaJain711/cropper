@@ -147,7 +147,12 @@ export default function App() {
       if (!source && pdfDoc && selection.rect && selection.page) {
         const page = await pdfDoc.getPage(selection.page);
         const crop = await cropCanvasRegion(page, selection.rect);
-        source = crop?.blob || crop?.dataUrl;
+        source = crop?.dataUrl;
+        try {
+          page.cleanup();
+        } catch {
+          // ignore
+        }
       }
 
       if (!source) {
@@ -177,9 +182,14 @@ export default function App() {
     }
   };
 
+  const MAX_HISTORY_STEPS = 20;
+
   const updateSelectionsWithHistory = (newSelections) => {
     setSelections(newSelections);
     const newHistory = history.slice(0, historyPointer + 1);
+    if (newHistory.length >= MAX_HISTORY_STEPS) {
+      newHistory.shift();
+    }
     setHistory([...newHistory, newSelections]);
     setHistoryPointer(newHistory.length);
   };
@@ -205,11 +215,18 @@ export default function App() {
     }
   }, [historyPointer, history]);
 
+  const refreshSavedSessions = useCallback(async () => {
+    try {
+      const sessions = await getAllSessions();
+      setSavedSessionsList(sessions || {});
+    } catch (err) {
+      console.error('Error refreshing sessions:', err);
+    }
+  }, []);
+
   // Auto-save file metadata to IndexedDB when currentNumber or labelOptions changes
   useEffect(() => {
     if (!fileName) return;
-
-    let isSubscribed = true;
 
     async function doSaveMetadata() {
       try {
@@ -218,22 +235,12 @@ export default function App() {
           labelOptions,
           lastModified: new Date().toISOString()
         });
-        if (isSubscribed) {
-          const sessions = await getAllSessions();
-          if (isSubscribed) {
-            setSavedSessionsList(sessions || {});
-          }
-        }
       } catch (err) {
         console.error('Error saving metadata to IndexedDB:', err);
       }
     }
 
     doSaveMetadata();
-
-    return () => {
-      isSubscribed = false;
-    };
   }, [fileName, currentNumber, labelOptions]);
 
   // Global keyboard listeners for Arrows and Undo/Redo
@@ -326,6 +333,13 @@ export default function App() {
   const handleFileSelect = async (file) => {
     try {
       setIsProcessing(true);
+      if (pdfDoc) {
+        try {
+          pdfDoc.destroy();
+        } catch (e) {
+          console.error('Error destroying previous PDF document:', e);
+        }
+      }
       const doc = await loadPDF(file);
       
       // Load session if exists
@@ -342,10 +356,7 @@ export default function App() {
       setCurrentPage(1);
 
       if (savedSession) {
-        const loadedSelections = (savedSession.selections || []).map(s => ({
-          ...s,
-          imageBlob: s.imageDataUrl ? dataURLtoBlob(s.imageDataUrl) : null
-        }));
+        const loadedSelections = savedSession.selections || [];
         setSelections(loadedSelections);
         setCurrentNumber(savedSession.currentNumber ?? 1);
         
@@ -415,7 +426,6 @@ export default function App() {
         text: textData.text,
         fontFamily: textData.fontFamily,
         fontSize: textData.fontSize,
-        imageBlob: crop ? crop.blob : null,
         imageDataUrl: crop ? crop.dataUrl : null
       };
 
@@ -424,8 +434,6 @@ export default function App() {
 
       // Save new selection record to IndexedDB
       await addOrUpdateSelectionInDB(fileName, newSelection);
-      const sessions = await getAllSessions();
-      setSavedSessionsList(sessions || {});
 
       // Cycle to the next label option
       if (labelOptions.length > 0) {
@@ -443,8 +451,6 @@ export default function App() {
     updateSelectionsWithHistory(updated);
     try {
       await deleteSelectionFromDB(id);
-      const sessions = await getAllSessions();
-      setSavedSessionsList(sessions || {});
     } catch (e) {
       console.error('Error deleting selection:', e);
     }
@@ -457,8 +463,6 @@ export default function App() {
         for (const sel of selections) {
           await deleteSelectionFromDB(sel.id);
         }
-        const sessions = await getAllSessions();
-        setSavedSessionsList(sessions || {});
       } catch (e) {
         console.error('Error clearing selections:', e);
       }
@@ -473,8 +477,6 @@ export default function App() {
     if (updatedSel) {
       try {
         await addOrUpdateSelectionInDB(fileName, updatedSel);
-        const sessions = await getAllSessions();
-        setSavedSessionsList(sessions || {});
       } catch (e) {
         console.error('Error updating selection:', e);
       }
@@ -495,7 +497,6 @@ export default function App() {
         text: textData.text,
         fontFamily: textData.fontFamily,
         fontSize: textData.fontSize,
-        imageBlob: crop ? crop.blob : null,
         imageDataUrl: crop ? crop.dataUrl : null
       };
 
@@ -505,8 +506,6 @@ export default function App() {
       const updatedSel = updated.find((s) => s.id === id);
       if (updatedSel) {
         await addOrUpdateSelectionInDB(fileName, updatedSel);
-        const sessions = await getAllSessions();
-        setSavedSessionsList(sessions || {});
       }
     } catch (err) {
       console.error('Error updating selection crop:', err);
@@ -515,10 +514,7 @@ export default function App() {
 
   // Load a saved project session
   const handleLoadSession = (sessionFileName, sessionData) => {
-    const loadedSelections = (sessionData.selections || []).map(s => ({
-      ...s,
-      imageBlob: s.imageDataUrl ? dataURLtoBlob(s.imageDataUrl) : null
-    }));
+    const loadedSelections = sessionData.selections || [];
     
     setFileName(sessionFileName);
     setSelections(loadedSelections);
@@ -539,6 +535,11 @@ export default function App() {
     initHistory(loadedSelections);
 
     if (pdfDoc && fileName !== sessionFileName) {
+      try {
+        pdfDoc.destroy();
+      } catch (e) {
+        // ignore
+      }
       setPdfDoc(null);
       setPageCount(0);
       setCurrentPage(1);
@@ -550,8 +551,7 @@ export default function App() {
     if (window.confirm(`Are you sure you want to delete the saved session for "${nameToDelete}"?`)) {
       try {
         await deleteSession(nameToDelete);
-        const sessions = await getAllSessions();
-        setSavedSessionsList(sessions || {});
+        await refreshSavedSessions();
 
         if (nameToDelete === fileName) {
           setSelections([]);
@@ -624,10 +624,7 @@ export default function App() {
         setSavedSessionsList(merged);
 
         if (fileName && merged[fileName]) {
-          const loadedSelections = (merged[fileName].selections || []).map(s => ({
-            ...s,
-            imageBlob: s.imageDataUrl ? dataURLtoBlob(s.imageDataUrl) : null
-          }));
+          const loadedSelections = merged[fileName].selections || [];
           setSelections(loadedSelections);
           setCurrentNumber(merged[fileName].currentNumber ?? 1);
           
@@ -781,6 +778,7 @@ export default function App() {
               // Sessions List props
               activeFileName={fileName}
               savedSessionsList={savedSessionsList}
+              onRefreshSessions={refreshSavedSessions}
               onLoadSession={handleLoadSession}
               onDeleteSession={handleDeleteSession}
               onClearAllSessions={handleClearAllSessions}
